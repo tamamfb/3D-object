@@ -1,41 +1,35 @@
-// ====== Setup & Resize Canvas ======
 const canvas = document.getElementById("myCanvas");
-const ctx = canvas.getContext("2d", { alpha: false });
+const gl = canvas.getContext("webgl", { antialias: true });
+if (!gl) {
+  alert("WebGL tidak tersedia di browser ini.");
+}
 
 function fitCanvas() {
   const rect = canvas.parentElement.getBoundingClientRect();
   const dpr = Math.max(1, window.devicePixelRatio || 1);
   const w = Math.max(200, Math.floor(rect.width));
   const h = Math.max(200, Math.floor(rect.height));
-  canvas.width  = Math.floor(w * dpr);
+  canvas.width = Math.floor(w * dpr);
   canvas.height = Math.floor(h * dpr);
-  canvas.style.width  = w + "px";
+  canvas.style.width = w + "px";
   canvas.style.height = h + "px";
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.lineJoin = "round";
-  ctx.miterLimit = 2;
+  gl.viewport(0, 0, canvas.width, canvas.height);
 }
 window.addEventListener("resize", fitCanvas);
 fitCanvas();
 
-// ====== Kamera & batas ======
 const CAM_Z = 600;
-const NEAR  = 8;
-const NEAR_EPS = 1e-4;
+const NEAR = 8;
+const FAR = 2000;
 
-// Dimensi meja/kaki
 const W = 300, D = 180, H = 150, T = 10;
 
-// ====== State ======
 let rotX = 0, rotY = 0, rotZ = 0;
-let pos  = { x: 0, y: 0, z: 0 };
-
-// Auto rotate (kecepatan konstan & tidak bisa diubah user)
-let autoRotate = false;                 // default OFF, toggle dengan tombol/keyboard
-const SPD = { x: 20, y: 30, z: 0 };     // derajat per detik (konstan)
+let pos = { x: 0, y: 0, z: 0 };
+let autoRotate = false;
+const SPD = { x: 20, y: 30, z: 0 };
 let lastTime = performance.now();
 
-// ====== UI ======
 const rotXEl = document.getElementById("rotX");
 const rotYEl = document.getElementById("rotY");
 const rotZEl = document.getElementById("rotZ");
@@ -43,218 +37,277 @@ const valRotX = document.getElementById("valRotX");
 const valRotY = document.getElementById("valRotY");
 const valRotZ = document.getElementById("valRotZ");
 const toggleAutoBtn = document.getElementById("toggleAuto");
-
 const posReadout = document.getElementById("posReadout");
 const btn = {
-  xMinus: document.getElementById("xMinus"), xPlus : document.getElementById("xPlus"),
-  yMinus: document.getElementById("yMinus"), yPlus : document.getElementById("yPlus"),
-  zMinus: document.getElementById("zMinus"), zPlus : document.getElementById("zPlus"),
+  xMinus: document.getElementById("xMinus"), xPlus: document.getElementById("xPlus"),
+  yMinus: document.getElementById("yMinus"), yPlus: document.getElementById("yPlus"),
+  zMinus: document.getElementById("zMinus"), zPlus: document.getElementById("zPlus"),
 };
 
-// ====== 3D Math (Vec4) ======
-class Vec4 { constructor(x=0, y=0, z=0, w=1){ this.x=x; this.y=y; this.z=z; this.w=w; } }
-
-function rotatePoint(p, rx, ry, rz) {
-  let {x, y, z} = p;
-  const cx=Math.cos(rx), sx=Math.sin(rx),
-        cy=Math.cos(ry), sy=Math.sin(ry),
-        cz=Math.cos(rz), sz=Math.sin(rz);
-  // X
-  let ny=y*cx - z*sx, nz=y*sx + z*cx; y=ny; z=nz;
-  // Y
-  let nx=x*cy + z*sy; nz=-x*sy + z*cy; x=nx; z=nz;
-  // Z
-  nx=x*cz - y*sz; ny=x*sz + y*cz; x=nx; y=ny;
-  return new Vec4(x, y, z);
+function compileShader(src, type) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+    console.error(gl.getShaderInfoLog(s));
+    gl.deleteShader(s);
+    return null;
+  }
+  return s;
 }
 
-function project(p) {
-  const z_cam = p.z + CAM_Z;
-  const s = CAM_Z / z_cam;
-  return {
-    x: p.x * s + canvas.clientWidth / 2,
-    y: -p.y * s + canvas.clientHeight / 2, // balikkan agar +Y dunia = atas layar
-    z: p.z, z_cam
-  };
+function createProgram(vsSrc, fsSrc) {
+  const vs = compileShader(vsSrc, gl.VERTEX_SHADER);
+  const fs = compileShader(fsSrc, gl.FRAGMENT_SHADER);
+  const p = gl.createProgram();
+  gl.attachShader(p, vs);
+  gl.attachShader(p, fs);
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+    console.error(gl.getProgramInfoLog(p));
+    gl.deleteProgram(p);
+    return null;
+  }
+  return p;
 }
 
-// ====== Face & Shape ======
-class Face { constructor(vertices, color){ this.vertices = vertices; this.color = color; } }
-class Shape { constructor(faces, sortBias=0){ this.faces = faces; this.sortBias = sortBias; } }
-
-// ====== Geometry ======
-function createBox(x1, x2, y1, y2, z1, z2, color, sortBias=0) {
-  const v = [
-    new Vec4(x1, y1, z1), new Vec4(x2, y1, z1), new Vec4(x2, y2, z1), new Vec4(x1, y2, z1),
-    new Vec4(x1, y1, z2), new Vec4(x2, y1, z2), new Vec4(x2, y2, z2), new Vec4(x1, y2, z2)
-  ];
-  // CCW dari luar
-  const faces = [
-    new Face([v[4], v[5], v[6], v[7]], color), // +Z
-    new Face([v[1], v[0], v[3], v[2]], color), // -Z
-    new Face([v[7], v[6], v[2], v[3]], color), // +Y
-    new Face([v[0], v[1], v[5], v[4]], color), // -Y
-    new Face([v[1], v[5], v[6], v[2]], color), // +X
-    new Face([v[0], v[3], v[7], v[4]], color)  // -X
-  ];
-  return new Shape(faces, sortBias);
+function hexToRgbNorm(hex) {
+  const n = parseInt(hex.replace("#", ""), 16);
+  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
 }
 
-const COL_LEG  = "#000000";
-const COL_BACK = "#d2b48c";
-const COL_TOP  = "#8b7355";
-
-const legBias = 0.1, backBias = -0.1, topBias = 0.2;
-
-const shapes = [
-  // kaki kiri & kanan
-  createBox(-W/2, -W/2+T, -H, 0, -D/2, D/2-1, COL_LEG, legBias),
-  createBox( W/2-T,  W/2, -H, 0, -D/2, D/2-1, COL_LEG, legBias),
-  // alas
-  createBox(-W/2, W/2, 0, T, -D/2, D/2, COL_TOP, topBias)
-];
-// papan belakang 3/4
-{
-  const backHeight = H * 0.75;
-  const GAP = 1.5;
-  const x1 = -W/2 + T + GAP;
-  const x2 =  W/2 - T - GAP;
-  const y1 = -backHeight;
-  const y2 =  0;
-  const z1 = D/2 - T - 2;
-  const z2 = D/2 - 2;
-  shapes.push(createBox(x1, x2, y1, y2, z1, z2, COL_BACK, backBias));
-}
-
-// ====== Clipping Near-Plane ======
-const zdist = p => p.z + CAM_Z;
-const insideNear = p => zdist(p) >= (NEAR + NEAR_EPS);
-
-function clipAgainstNear(verts) {
-  if (verts.length < 3) return [];
-  const out = [];
-  for (let i = 0; i < verts.length; i++) {
-    const A = verts[i];
-    const B = verts[(i + 1) % verts.length];
-    const Ain = insideNear(A);
-    const Bin = insideNear(B);
-
-    if (Ain && Bin) {
-      out.push(new Vec4(B.x, B.y, B.z));
-    } else if (Ain && !Bin) {
-      const t = (NEAR - zdist(A)) / (zdist(B) - zdist(A));
-      out.push(new Vec4(A.x + (B.x - A.x) * t, A.y + (B.y - A.y) * t, A.z + (B.z - A.z) * t));
-    } else if (!Ain && Bin) {
-      const t = (NEAR - zdist(A)) / (zdist(B) - zdist(A));
-      out.push(new Vec4(A.x + (B.x - A.x) * t, A.y + (B.y - A.y) * t, A.z + (B.z - A.z) * t));
-      out.push(new Vec4(B.x, B.y, B.z));
+const Mat4 = {
+  identity() { return new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]); },
+  multiply(a, b) {
+    const out = new Float32Array(16);
+    for (let i = 0; i < 4; i++) {
+      for (let j = 0; j < 4; j++) {
+        let s = 0;
+        for (let k = 0; k < 4; k++) s += a[k * 4 + j] * b[i * 4 + k];
+        out[i * 4 + j] = s;
+      }
     }
+    return out;
+  },
+  translate(tx, ty, tz) {
+    const m = Mat4.identity();
+    m[12] = tx; m[13] = ty; m[14] = tz;
+    return m;
+  },
+  rotateX(a) {
+    const c = Math.cos(a), s = Math.sin(a);
+    return new Float32Array([1, 0, 0, 0, 0, c, s, 0, 0, -s, c, 0, 0, 0, 0, 1]);
+  },
+  rotateY(a) {
+    const c = Math.cos(a), s = Math.sin(a);
+    return new Float32Array([c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, 0, 0, 0, 1]);
+  },
+  rotateZ(a) {
+    const c = Math.cos(a), s = Math.sin(a);
+    return new Float32Array([c, s, 0, 0, -s, c, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+  },
+  perspective(fovy, aspect, near, far) {
+    const f = 1 / Math.tan(fovy / 2);
+    const nf = 1 / (near - far);
+    const out = new Float32Array(16);
+    out[0] = f / aspect;
+    out[5] = f;
+    out[10] = (far + near) * nf;
+    out[11] = -1;
+    out[14] = (2 * far * near) * nf;
+    return out;
   }
-  return out.length >= 3 ? out : [];
-}
+};
 
-// ====== Helpers ======
-function faceNormal(a, b, c) {
-  const ux = b.x - a.x, uy = b.y - a.y, uz = b.z - a.z;
-  const vx = c.x - a.x, vy = c.y - a.y, vz = c.z - a.z;
-  return { x: uy * vz - uz * vy, y: uz * vx - ux * vz, z: ux * vy - uy * vx };
+const vsSource = `
+attribute vec3 aPosition;
+attribute vec3 aColor;
+uniform mat4 uMVP;
+varying vec3 vColor;
+void main() {
+  gl_Position = uMVP * vec4(aPosition, 1.0);
+  vColor = aColor;
 }
-function snap05(v){ return { x: Math.round(v.x) + 0.5, y: Math.round(v.y) + 0.5 }; }
+`;
+const fsSource = `
+precision mediump float;
+varying vec3 vColor;
+void main(){
+  gl_FragColor = vec4(vColor, 1.0);
+}
+`;
+const program = createProgram(vsSource, fsSource);
+gl.useProgram(program);
 
-function drawPolygon(points, color) {
-  if (points.length < 3) return;
-  ctx.beginPath();
-  const p0 = snap05(points[0]);
-  ctx.moveTo(p0.x, p0.y);
-  for (let i = 1; i < points.length; i++) {
-    const pi = snap05(points[i]);
-    ctx.lineTo(pi.x, pi.y);
+const aPositionLoc = gl.getAttribLocation(program, "aPosition");
+const aColorLoc = gl.getAttribLocation(program, "aColor");
+const uMVPLoc = gl.getUniformLocation(program, "uMVP");
+
+function createBoxData(x1, x2, y1, y2, z1, z2, color) {
+  const px = [
+    [x1, y1, z1], [x2, y1, z1], [x2, y2, z1], [x1, y2, z1],
+    [x1, y1, z2], [x2, y1, z2], [x2, y2, z2], [x1, y2, z2]
+  ];
+  const facesQuads = [
+    [0, 1, 2, 3], [4, 5, 6, 7], [3, 2, 6, 7], [0, 4, 5, 1],
+    [1, 5, 6, 2], [0, 3, 7, 4]
+  ];
+  const pos = [], col = [];
+  const rgb = hexToRgbNorm(color);
+  for (let f = 0; f < facesQuads.length; f++) {
+    const quad = facesQuads[f];
+    const a = px[quad[0]], b = px[quad[1]], c = px[quad[2]], d = px[quad[3]];
+    pos.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]);
+    pos.push(a[0], a[1], a[2], c[0], c[1], c[2], d[0], d[1], d[2]);
+    for (let k = 0; k < 6; k++) col.push(rgb[0], rgb[1], rgb[2]);
   }
-  ctx.closePath();
-  ctx.fillStyle = color;
-  ctx.fill();
-  ctx.lineWidth = 0.8;
-  ctx.strokeStyle = color;
-  ctx.stroke();
+  return { pos: new Float32Array(pos), col: new Float32Array(col) };
 }
 
-// ====== Rendering ======
+const COL_LEG = "#000000";
+const COL_BACK = "#d2b48c";
+const COL_TOP = "#8b7355";
+const COL_MONITOR_SCREEN = "#000000";
+const COL_MONITOR_BEZEL = "#dddddd";
+
+const allPositions = [];
+const allColors = [];
+
+function addShapeData(data) {
+  allPositions.push(...data.pos);
+  allColors.push(...data.col);
+}
+
+addShapeData(createBoxData(-W / 2, -W / 2 + T, -H, 0, -D / 2, D / 2 - 1, COL_LEG));
+addShapeData(createBoxData(W / 2 - T, W / 2, -H, 0, -D / 2, D / 2 - 1, COL_LEG));
+addShapeData(createBoxData(-W / 2, W / 2, 0, T, -D / 2, D / 2, COL_TOP));
+{
+  const backHeight = H * 0.75, GAP = 1.5;
+  const x1 = -W / 2 + T + GAP, x2 = W / 2 - T - GAP;
+  const y1 = -backHeight, y2 = 0;
+  const z1 = D / 2 - T - 2, z2 = D / 2 - 2;
+  addShapeData(createBoxData(x1, x2, y1, y2, z1, z2, COL_BACK));
+}
+
+const monitorWidth = 120, monitorHeight = 90, monitorDepth = 15;
+const standHeight = monitorHeight * 0.3;
+const baseHeight = monitorDepth * 0.2;
+const monitorZPosition = -D / 2 + monitorDepth / 2 + 10;
+const monitorCenterX = 0;
+
+const baseY_start = T;
+const baseY_end = baseY_start + baseHeight;
+const baseData = createBoxData(
+  monitorCenterX - (monitorWidth * 0.6) / 2, monitorCenterX + (monitorWidth * 0.6) / 2,
+  baseY_start, baseY_end,
+  monitorZPosition - (monitorDepth * 0.8) / 2, monitorZPosition + (monitorDepth * 0.8) / 2,
+  COL_MONITOR_BEZEL
+);
+addShapeData(baseData);
+
+const standY_start = baseY_end;
+const standY_end = standY_start + standHeight;
+const standData = createBoxData(
+  monitorCenterX - (monitorWidth * 0.1) / 2, monitorCenterX + (monitorWidth * 0.1) / 2,
+  standY_start, standY_end,
+  monitorZPosition - (monitorDepth * 0.5) / 2, monitorZPosition + (monitorDepth * 0.5) / 2,
+  COL_MONITOR_BEZEL
+);
+addShapeData(standData);
+
+const bezelHeight = monitorHeight;
+const bezelY_start = standY_end;
+const bezelY_end = bezelY_start + bezelHeight;
+const bezelData = createBoxData(
+  monitorCenterX - monitorWidth / 2, monitorCenterX + monitorWidth / 2,
+  bezelY_start, bezelY_end,
+  monitorZPosition - monitorDepth / 2, monitorZPosition + monitorDepth / 2,
+  COL_MONITOR_BEZEL
+);
+addShapeData(bezelData);
+
+const screenHeight = monitorHeight * 0.8;
+const screenWidth = monitorWidth * 0.9;
+const screenDepth = monitorDepth * 0.1;
+const screenY_start = bezelY_start + (bezelHeight - screenHeight) / 2;
+const screenY_end = screenY_start + screenHeight;
+const screenZ_start = monitorZPosition - screenDepth / 2;
+const screenZ_end = monitorZPosition + screenDepth / 2;
+
+const screenData = createBoxData(
+  monitorCenterX - screenWidth / 2, monitorCenterX + screenWidth / 2,
+  screenY_start, screenY_end,
+  screenZ_start, screenZ_end,
+  COL_MONITOR_SCREEN
+);
+addShapeData(screenData);
+
+const positionsArray = new Float32Array(allPositions);
+const colorsArray = new Float32Array(allColors);
+
+const posBuffer = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
+gl.bufferData(gl.ARRAY_BUFFER, positionsArray, gl.STATIC_DRAW);
+
+const colBuffer = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, colBuffer);
+gl.bufferData(gl.ARRAY_BUFFER, colorsArray, gl.STATIC_DRAW);
+
+gl.enableVertexAttribArray(aPositionLoc);
+gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
+gl.vertexAttribPointer(aPositionLoc, 3, gl.FLOAT, false, 0, 0);
+
+gl.enableVertexAttribArray(aColorLoc);
+gl.bindBuffer(gl.ARRAY_BUFFER, colBuffer);
+gl.vertexAttribPointer(aColorLoc, 3, gl.FLOAT, false, 0, 0);
+
+gl.enable(gl.DEPTH_TEST);
+gl.depthFunc(gl.LEQUAL);
+gl.disable(gl.CULL_FACE);
+gl.clearColor(1.0, 1.0, 1.0, 1.0);
+
+function deg2rad(d) { return d * Math.PI / 180; }
+
 function draw() {
-  // delta time untuk auto-rotate
   const now = performance.now();
-  const dt = Math.max(0, (now - lastTime) / 1000); // detik
+  const dt = Math.max(0, (now - lastTime) / 1000);
   lastTime = now;
 
   if (autoRotate) {
-    // tambah rotasi sesuai kecepatan konstan
-    rotX += (SPD.x * Math.PI/180) * dt;
-    rotY += (SPD.y * Math.PI/180) * dt;
-    rotZ += (SPD.z * Math.PI/180) * dt;
+    rotX += (SPD.x * Math.PI / 180) * dt;
+    rotY += (SPD.y * Math.PI / 180) * dt;
+    rotZ += (SPD.z * Math.PI / 180) * dt;
 
-    // pantau slider supaya UI tetap sinkron
-    rotXEl.value = Math.round(rotX * 180/Math.PI);
-    rotYEl.value = Math.round(rotY * 180/Math.PI);
-    rotZEl.value = Math.round(rotZ * 180/Math.PI);
+    rotXEl.value = Math.round(rotX * 180 / Math.PI);
+    rotYEl.value = Math.round(rotY * 180 / Math.PI);
+    rotZEl.value = Math.round(rotZ * 180 / Math.PI);
     valRotX.textContent = rotXEl.value + "°";
     valRotY.textContent = rotYEl.value + "°";
     valRotZ.textContent = rotZEl.value + "°";
   }
 
-  ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
-  const bucket = [];
-  const EPS = 1e-6;
-  const POLY_OFFSET = 2e-3;
+  const aspect = canvas.width / canvas.height;
+  const proj = Mat4.perspective(deg2rad(45), aspect, NEAR, FAR);
+  const view = Mat4.translate(0, 0, -CAM_Z);
+  let model = Mat4.translate(pos.x, pos.y, pos.z);
+  model = Mat4.multiply(model, Mat4.rotateX(rotX));
+  model = Mat4.multiply(model, Mat4.rotateY(rotY));
+  model = Mat4.multiply(model, Mat4.rotateZ(rotZ));
+  let vp = Mat4.multiply(proj, view);
+  let mvp = Mat4.multiply(vp, model);
+  gl.uniformMatrix4fv(uMVPLoc, false, mvp);
 
-  shapes.forEach(shape => {
-    shape.faces.forEach(face => {
-      const vv0 = face.vertices.map(v => {
-        const r = rotatePoint(v, rotX, rotY, rotZ);
-        return new Vec4(r.x + pos.x, r.y + pos.y, r.z + pos.z);
-      });
-
-      const vv = clipAgainstNear(vv0);
-      if (vv.length < 3) return;
-
-      const n = faceNormal(vv[0], vv[1], vv[2]);
-
-      const pts = [];
-      let maxZcam = -Infinity, avgZcam = 0, minZcam = Infinity;
-      for (const v of vv) {
-        const z_cam = v.z + CAM_Z;
-        maxZcam = Math.max(maxZcam, z_cam);
-        minZcam = Math.min(minZcam, z_cam);
-        avgZcam += z_cam;
-        const p2 = project(v);
-        pts.push(p2);
-      }
-      avgZcam /= vv.length;
-
-      const adaptive = (n.z < 0 ? -POLY_OFFSET : +POLY_OFFSET);
-
-      bucket.push({
-        points: pts,
-        color: face.color,
-        depth: maxZcam + shape.sortBias + adaptive + EPS * bucket.length,
-        tie: minZcam + avgZcam * 0.1
-      });
-    });
-  });
-
-  bucket.sort((a, b) => b.depth - a.depth || b.tie - a.tie);
-  for (const f of bucket) drawPolygon(f.points, f.color);
+  const totalVertices = positionsArray.length / 3;
+  gl.drawArrays(gl.TRIANGLES, 0, totalVertices);
 
   requestAnimationFrame(draw);
 }
-draw();
+requestAnimationFrame(draw);
 
-// ====== Events ======
-function setLabel(el, lab){ lab.textContent = `${el.value}°`; }
-function deg2rad(deg){ return deg * Math.PI / 180; }
+function setLabel(el, lab) { lab.textContent = `${el.value}°`; }
 
-// sinkron dari UI (default 0°)
 rotX = deg2rad(+rotXEl.value);
 rotY = deg2rad(+rotYEl.value);
 rotZ = deg2rad(+rotZEl.value);
@@ -264,12 +317,10 @@ rotXEl.oninput = () => { rotX = deg2rad(+rotXEl.value); setLabel(rotXEl, valRotX
 rotYEl.oninput = () => { rotY = deg2rad(+rotYEl.value); setLabel(rotYEl, valRotY); };
 rotZEl.oninput = () => { rotZ = deg2rad(+rotZEl.value); setLabel(rotZEl, valRotZ); };
 
-// Toggle auto-rotate
 toggleAutoBtn.onclick = () => {
   autoRotate = !autoRotate;
   toggleAutoBtn.textContent = autoRotate ? "Stop" : "Start";
 };
-// Keyboard toggle
 window.addEventListener('keydown', (e) => {
   if ((e.key === 'r' || e.key === 'R') && !e.repeat) {
     autoRotate = !autoRotate;
@@ -277,19 +328,17 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-// Translasi
 const STEP = 20, STEP_Z = 10;
-function showPos(){ posReadout.textContent = `Posisi: x=${pos.x}, y=${pos.y}, z=${pos.z}`; }
+function showPos() { posReadout.textContent = `Posisi: x=${pos.x}, y=${pos.y}, z=${pos.z}`; }
 showPos();
 
 btn.xMinus.onclick = () => { pos.x -= STEP; showPos(); };
-btn.xPlus.onclick  = () => { pos.x += STEP; showPos(); };
-btn.yMinus.onclick = () => { pos.y -= STEP; showPos(); }; // Y− turun
-btn.yPlus.onclick  = () => { pos.y += STEP; showPos(); }; // Y+ naik
-btn.zMinus.onclick = () => { pos.z += STEP_Z; showPos(); }; // Z− menjauh
-btn.zPlus.onclick  = () => { pos.z -= STEP_Z; showPos(); }; // Z+ mendekat
+btn.xPlus.onclick = () => { pos.x += STEP; showPos(); };
+btn.yMinus.onclick = () => { pos.y -= STEP; showPos(); };
+btn.yPlus.onclick = () => { pos.y += STEP; showPos(); };
+btn.zMinus.onclick = () => { pos.z += STEP_Z; showPos(); };
+btn.zPlus.onclick = () => { pos.z -= STEP_Z; showPos(); };
 
-// Keyboard: WASD + panah + Q/E
 window.addEventListener('keydown', (e) => {
   const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : "";
   if (tag === 'input' || tag === 'textarea') return;
@@ -299,8 +348,8 @@ window.addEventListener('keydown', (e) => {
     case 'ArrowRight': case 'd': case 'D': pos.x += STEP; moved = true; break;
     case 'ArrowUp': case 'w': case 'W': pos.y += STEP; moved = true; break;
     case 'ArrowDown': case 's': case 'S': pos.y -= STEP; moved = true; break;
-    case 'q': case 'Q': pos.z -= STEP_Z; moved = true; break; // mendekat
-    case 'e': case 'E': pos.z += STEP_Z; moved = true; break; // menjauh
+    case 'q': case 'Q': pos.z -= STEP_Z; moved = true; break;
+    case 'e': case 'E': pos.z += STEP_Z; moved = true; break;
   }
   if (moved) { e.preventDefault(); showPos(); }
 });
