@@ -27,7 +27,7 @@ const W = 300, D = 180, H = 150, T = 10;
 let rotX = 0, rotY = 0, rotZ = 0;
 let pos = { x: 0, y: 0, z: 0 };
 let autoRotate = false;
-const SPD = { x: 20, y: 30, z: 0 };
+const SPD = { x: 20, y: 30, z: 15 };
 let lastTime = performance.now();
 
 const rotXEl = document.getElementById("rotX");
@@ -192,39 +192,36 @@ addShapeData(createBoxData(-W / 2, W / 2, 0, T, -D / 2, D / 2, COL_TOP));
 const monitorWidth = 120, monitorHeight = 90, monitorDepth = 15;
 const standHeight = monitorHeight * 0.3;
 const baseHeight = monitorDepth * 0.2;
-const monitorZPosition = -D / 2 + monitorDepth / 2 + 10;
+const monitorZPosition = D / 2 + monitorDepth / 2 - 10;
 const monitorCenterX = 0;
 
 const baseY_start = T;
 const baseY_end = baseY_start + baseHeight;
-const baseData = createBoxData(
+addShapeData(createBoxData(
   monitorCenterX - (monitorWidth * 0.6) / 2, monitorCenterX + (monitorWidth * 0.6) / 2,
   baseY_start, baseY_end,
   monitorZPosition - (monitorDepth * 0.8) / 2, monitorZPosition + (monitorDepth * 0.8) / 2,
   COL_MONITOR_BEZEL
-);
-addShapeData(baseData);
+));
 
 const standY_start = baseY_end;
 const standY_end = standY_start + standHeight;
-const standData = createBoxData(
+addShapeData(createBoxData(
   monitorCenterX - (monitorWidth * 0.1) / 2, monitorCenterX + (monitorWidth * 0.1) / 2,
   standY_start, standY_end,
   monitorZPosition - (monitorDepth * 0.5) / 2, monitorZPosition + (monitorDepth * 0.5) / 2,
   COL_MONITOR_BEZEL
-);
-addShapeData(standData);
+));
 
 const bezelHeight = monitorHeight;
 const bezelY_start = standY_end;
 const bezelY_end = bezelY_start + bezelHeight;
-const bezelData = createBoxData(
+addShapeData(createBoxData(
   monitorCenterX - monitorWidth / 2, monitorCenterX + monitorWidth / 2,
   bezelY_start, bezelY_end,
   monitorZPosition - monitorDepth / 2, monitorZPosition + monitorDepth / 2,
   COL_MONITOR_BEZEL
-);
-addShapeData(bezelData);
+));
 
 const screenHeight = monitorHeight * 0.8;
 const screenWidth = monitorWidth * 0.9;
@@ -233,14 +230,12 @@ const screenY_start = bezelY_start + (bezelHeight - screenHeight) / 2;
 const screenY_end = screenY_start + screenHeight;
 const screenZ_start = monitorZPosition - screenDepth / 2;
 const screenZ_end = monitorZPosition + screenDepth / 2;
-
-const screenData = createBoxData(
+addShapeData(createBoxData(
   monitorCenterX - screenWidth / 2, monitorCenterX + screenWidth / 2,
   screenY_start, screenY_end,
   screenZ_start, screenZ_end,
   COL_MONITOR_SCREEN
-);
-addShapeData(screenData);
+));
 
 const positionsArray = new Float32Array(allPositions);
 const colorsArray = new Float32Array(allColors);
@@ -266,7 +261,21 @@ gl.depthFunc(gl.LEQUAL);
 gl.disable(gl.CULL_FACE);
 gl.clearColor(1.0, 1.0, 1.0, 1.0);
 
+function rad2deg(r) { return r * 180 / Math.PI; }
 function deg2rad(d) { return d * Math.PI / 180; }
+function wrapDeg(d) {
+  d = ((d + 180) % 360 + 360) % 360 - 180;
+  return d;
+}
+
+function updateSlidersFromRotation() {
+  rotXEl.value = wrapDeg(rad2deg(rotX));
+  rotYEl.value = wrapDeg(rad2deg(rotY));
+  rotZEl.value = wrapDeg(rad2deg(rotZ));
+  valRotX.textContent = rotXEl.value + "°";
+  valRotY.textContent = rotYEl.value + "°";
+  valRotZ.textContent = rotZEl.value + "°";
+}
 
 function draw() {
   const now = performance.now();
@@ -277,17 +286,10 @@ function draw() {
     rotX += (SPD.x * Math.PI / 180) * dt;
     rotY += (SPD.y * Math.PI / 180) * dt;
     rotZ += (SPD.z * Math.PI / 180) * dt;
-
-    rotXEl.value = Math.round(rotX * 180 / Math.PI);
-    rotYEl.value = Math.round(rotY * 180 / Math.PI);
-    rotZEl.value = Math.round(rotZ * 180 / Math.PI);
-    valRotX.textContent = rotXEl.value + "°";
-    valRotY.textContent = rotYEl.value + "°";
-    valRotZ.textContent = rotZEl.value + "°";
+    updateSlidersFromRotation();
   }
 
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
   const aspect = canvas.width / canvas.height;
   const proj = Mat4.perspective(deg2rad(45), aspect, NEAR, FAR);
   const view = Mat4.translate(0, 0, -CAM_Z);
@@ -299,8 +301,7 @@ function draw() {
   let mvp = Mat4.multiply(vp, model);
   gl.uniformMatrix4fv(uMVPLoc, false, mvp);
 
-  const totalVertices = positionsArray.length / 3;
-  gl.drawArrays(gl.TRIANGLES, 0, totalVertices);
+  gl.drawArrays(gl.TRIANGLES, 0, positionsArray.length / 3);
 
   requestAnimationFrame(draw);
 }
