@@ -27,10 +27,13 @@ const NEAR_EPS = 1e-4;
 const W = 300, D = 180, H = 150, T = 10;
 
 // ====== State ======
-let rotX = 0;
-let rotY = 0;
-let rotZ = 0;
-let pos  = { x: 0, y: 0, z: 0 }; // default di tengah & tegak
+let rotX = 0, rotY = 0, rotZ = 0;
+let pos  = { x: 0, y: 0, z: 0 };
+
+// Auto rotate (kecepatan konstan & tidak bisa diubah user)
+let autoRotate = false;                 // default OFF, toggle dengan tombol/keyboard
+const SPD = { x: 20, y: 30, z: 0 };     // derajat per detik (konstan)
+let lastTime = performance.now();
 
 // ====== UI ======
 const rotXEl = document.getElementById("rotX");
@@ -39,6 +42,8 @@ const rotZEl = document.getElementById("rotZ");
 const valRotX = document.getElementById("valRotX");
 const valRotY = document.getElementById("valRotY");
 const valRotZ = document.getElementById("valRotZ");
+const toggleAutoBtn = document.getElementById("toggleAuto");
+
 const posReadout = document.getElementById("posReadout");
 const btn = {
   xMinus: document.getElementById("xMinus"), xPlus : document.getElementById("xPlus"),
@@ -68,9 +73,8 @@ function project(p) {
   const s = CAM_Z / z_cam;
   return {
     x: p.x * s + canvas.clientWidth / 2,
-    y: -p.y * s + canvas.clientHeight / 2,
-    z: p.z,
-    z_cam
+    y: -p.y * s + canvas.clientHeight / 2, // balikkan agar +Y dunia = atas layar
+    z: p.z, z_cam
   };
 }
 
@@ -103,11 +107,12 @@ const COL_TOP  = "#8b7355";
 const legBias = 0.1, backBias = -0.1, topBias = 0.2;
 
 const shapes = [
+  // kaki kiri & kanan
   createBox(-W/2, -W/2+T, -H, 0, -D/2, D/2-1, COL_LEG, legBias),
   createBox( W/2-T,  W/2, -H, 0, -D/2, D/2-1, COL_LEG, legBias),
+  // alas
   createBox(-W/2, W/2, 0, T, -D/2, D/2, COL_TOP, topBias)
 ];
-
 // papan belakang 3/4
 {
   const backHeight = H * 0.75;
@@ -138,18 +143,10 @@ function clipAgainstNear(verts) {
       out.push(new Vec4(B.x, B.y, B.z));
     } else if (Ain && !Bin) {
       const t = (NEAR - zdist(A)) / (zdist(B) - zdist(A));
-      out.push(new Vec4(
-        A.x + (B.x - A.x) * t,
-        A.y + (B.y - A.y) * t,
-        A.z + (B.z - A.z) * t
-      ));
+      out.push(new Vec4(A.x + (B.x - A.x) * t, A.y + (B.y - A.y) * t, A.z + (B.z - A.z) * t));
     } else if (!Ain && Bin) {
       const t = (NEAR - zdist(A)) / (zdist(B) - zdist(A));
-      out.push(new Vec4(
-        A.x + (B.x - A.x) * t,
-        A.y + (B.y - A.y) * t,
-        A.z + (B.z - A.z) * t
-      ));
+      out.push(new Vec4(A.x + (B.x - A.x) * t, A.y + (B.y - A.y) * t, A.z + (B.z - A.z) * t));
       out.push(new Vec4(B.x, B.y, B.z));
     }
   }
@@ -183,6 +180,26 @@ function drawPolygon(points, color) {
 
 // ====== Rendering ======
 function draw() {
+  // delta time untuk auto-rotate
+  const now = performance.now();
+  const dt = Math.max(0, (now - lastTime) / 1000); // detik
+  lastTime = now;
+
+  if (autoRotate) {
+    // tambah rotasi sesuai kecepatan konstan
+    rotX += (SPD.x * Math.PI/180) * dt;
+    rotY += (SPD.y * Math.PI/180) * dt;
+    rotZ += (SPD.z * Math.PI/180) * dt;
+
+    // pantau slider supaya UI tetap sinkron
+    rotXEl.value = Math.round(rotX * 180/Math.PI);
+    rotYEl.value = Math.round(rotY * 180/Math.PI);
+    rotZEl.value = Math.round(rotZ * 180/Math.PI);
+    valRotX.textContent = rotXEl.value + "°";
+    valRotY.textContent = rotYEl.value + "°";
+    valRotZ.textContent = rotZEl.value + "°";
+  }
+
   ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
@@ -247,10 +264,24 @@ rotXEl.oninput = () => { rotX = deg2rad(+rotXEl.value); setLabel(rotXEl, valRotX
 rotYEl.oninput = () => { rotY = deg2rad(+rotYEl.value); setLabel(rotYEl, valRotY); };
 rotZEl.oninput = () => { rotZ = deg2rad(+rotZEl.value); setLabel(rotZEl, valRotZ); };
 
-const STEP = 20;
-const STEP_Z = 10;
+// Toggle auto-rotate
+toggleAutoBtn.onclick = () => {
+  autoRotate = !autoRotate;
+  toggleAutoBtn.textContent = autoRotate ? "Stop" : "Start";
+};
+// Keyboard toggle
+window.addEventListener('keydown', (e) => {
+  if ((e.key === 'r' || e.key === 'R') && !e.repeat) {
+    autoRotate = !autoRotate;
+    toggleAutoBtn.textContent = autoRotate ? "Stop" : "Start";
+  }
+});
 
-// Tombol – arah yang intuitif
+// Translasi
+const STEP = 20, STEP_Z = 10;
+function showPos(){ posReadout.textContent = `Posisi: x=${pos.x}, y=${pos.y}, z=${pos.z}`; }
+showPos();
+
 btn.xMinus.onclick = () => { pos.x -= STEP; showPos(); };
 btn.xPlus.onclick  = () => { pos.x += STEP; showPos(); };
 btn.yMinus.onclick = () => { pos.y -= STEP; showPos(); }; // Y− turun
@@ -258,13 +289,10 @@ btn.yPlus.onclick  = () => { pos.y += STEP; showPos(); }; // Y+ naik
 btn.zMinus.onclick = () => { pos.z += STEP_Z; showPos(); }; // Z− menjauh
 btn.zPlus.onclick  = () => { pos.z -= STEP_Z; showPos(); }; // Z+ mendekat
 
-function showPos(){ posReadout.textContent = `Posisi: x=${pos.x}, y=${pos.y}, z=${pos.z}`; }
-showPos();
-
-// Keyboard: WASD + panah + Q/E untuk Z
+// Keyboard: WASD + panah + Q/E
 window.addEventListener('keydown', (e) => {
   const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : "";
-  if (tag === 'input' || tag === 'textarea') return; // jangan ganggu slider
+  if (tag === 'input' || tag === 'textarea') return;
   let moved = false;
   switch (e.key) {
     case 'ArrowLeft': case 'a': case 'A': pos.x -= STEP; moved = true; break;

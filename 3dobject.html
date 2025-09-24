@@ -62,12 +62,12 @@
     <!-- Kanan: Panel Kontrol -->
     <aside class="right">
       <div class="panel">
+        <!-- ROTASI MANUAL -->
         <div>
           <div class="section-title">Rotasi</div>
           <div class="sliders">
             <div class="row">
               <label for="rotX">Rotate X</label>
-              <!-- default tegak: 0° -->
               <input id="rotX" type="range" min="-180" max="180" value="0" step="1">
               <span id="valRotX">0°</span>
             </div>
@@ -89,6 +89,14 @@
           </div>
         </div>
 
+        <!-- AUTO ROTATE (kecepatan konstan) -->
+        <div>
+          <div class="section-title">Auto Rotate</div>
+          <button id="toggleAuto">Start</button>
+          <div class="subtle" style="margin-top:6px">Shortcut: tekan <b>R</b> untuk toggle</div>
+        </div>
+
+        <!-- TRANSLASI -->
         <div>
           <div class="section-title">Geser Posisi (Translasi)</div>
           <div class="controls">
