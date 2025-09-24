@@ -4,6 +4,7 @@ if (!gl) {
   alert("WebGL tidak tersedia di browser ini.");
 }
 
+// ====== Canvas Resize ======
 function fitCanvas() {
   const rect = canvas.parentElement.getBoundingClientRect();
   const dpr = Math.max(1, window.devicePixelRatio || 1);
@@ -18,18 +19,21 @@ function fitCanvas() {
 window.addEventListener("resize", fitCanvas);
 fitCanvas();
 
+// ====== Camera & Constants ======
 const CAM_Z = 600;
 const NEAR = 8;
 const FAR = 2000;
 
-const W = 300, D = 180, H = 150, T = 10;
+const W = 300, D = 180, H = 150, T = 10; // meja (width, depth, height, thickness)
 
+// ====== State ======
 let rotX = 0, rotY = 0, rotZ = 0;
 let pos = { x: 0, y: 0, z: 0 };
 let autoRotate = false;
 const SPD = { x: 20, y: 30, z: 15 };
 let lastTime = performance.now();
 
+// ====== UI ======
 const rotXEl = document.getElementById("rotX");
 const rotYEl = document.getElementById("rotY");
 const rotZEl = document.getElementById("rotZ");
@@ -44,6 +48,7 @@ const btn = {
   zMinus: document.getElementById("zMinus"), zPlus: document.getElementById("zPlus"),
 };
 
+// ====== GL Helpers ======
 function compileShader(src, type) {
   const s = gl.createShader(type);
   gl.shaderSource(s, src);
@@ -55,7 +60,6 @@ function compileShader(src, type) {
   }
   return s;
 }
-
 function createProgram(vsSrc, fsSrc) {
   const vs = compileShader(vsSrc, gl.VERTEX_SHADER);
   const fs = compileShader(fsSrc, gl.FRAGMENT_SHADER);
@@ -70,175 +74,196 @@ function createProgram(vsSrc, fsSrc) {
   }
   return p;
 }
-
 function hexToRgbNorm(hex) {
   const n = parseInt(hex.replace("#", ""), 16);
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
 }
 
+// ====== Mat4 ======
 const Mat4 = {
-  identity() { return new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]); },
+  identity() { return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]); },
   multiply(a, b) {
     const out = new Float32Array(16);
-    for (let i = 0; i < 4; i++) {
-      for (let j = 0; j < 4; j++) {
-        let s = 0;
-        for (let k = 0; k < 4; k++) s += a[k * 4 + j] * b[i * 4 + k];
-        out[i * 4 + j] = s;
-      }
+    for (let i=0;i<4;i++) for (let j=0;j<4;j++) {
+      let s=0; for (let k=0;k<4;k++) s += a[k*4+j]*b[i*4+k];
+      out[i*4+j]=s;
     }
     return out;
   },
-  translate(tx, ty, tz) {
-    const m = Mat4.identity();
-    m[12] = tx; m[13] = ty; m[14] = tz;
-    return m;
-  },
-  rotateX(a) {
-    const c = Math.cos(a), s = Math.sin(a);
-    return new Float32Array([1, 0, 0, 0, 0, c, s, 0, 0, -s, c, 0, 0, 0, 0, 1]);
-  },
-  rotateY(a) {
-    const c = Math.cos(a), s = Math.sin(a);
-    return new Float32Array([c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, 0, 0, 0, 1]);
-  },
-  rotateZ(a) {
-    const c = Math.cos(a), s = Math.sin(a);
-    return new Float32Array([c, s, 0, 0, -s, c, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
-  },
-  perspective(fovy, aspect, near, far) {
-    const f = 1 / Math.tan(fovy / 2);
-    const nf = 1 / (near - far);
-    const out = new Float32Array(16);
-    out[0] = f / aspect;
-    out[5] = f;
-    out[10] = (far + near) * nf;
-    out[11] = -1;
-    out[14] = (2 * far * near) * nf;
-    return out;
+  translate(tx, ty, tz) { const m=Mat4.identity(); m[12]=tx; m[13]=ty; m[14]=tz; return m; },
+  rotateX(a){ const c=Math.cos(a), s=Math.sin(a); return new Float32Array([1,0,0,0, 0,c,s,0, 0,-s,c,0, 0,0,0,1]); },
+  rotateY(a){ const c=Math.cos(a), s=Math.sin(a); return new Float32Array([c,0,-s,0, 0,1,0,0, s,0,c,0, 0,0,0,1]); },
+  rotateZ(a){ const c=Math.cos(a), s=Math.sin(a); return new Float32Array([c,s,0,0, -s,c,0,0, 0,0,1,0, 0,0,0,1]); },
+  perspective(fovy, aspect, near, far){
+    const f=1/Math.tan(fovy/2), nf=1/(near-far), o=new Float32Array(16);
+    o[0]=f/aspect; o[5]=f; o[10]=(far+near)*nf; o[11]=-1; o[14]=(2*far*near)*nf;
+    return o;
   }
 };
 
+// ====== Shaders ======
 const vsSource = `
 attribute vec3 aPosition;
 attribute vec3 aColor;
 uniform mat4 uMVP;
 varying vec3 vColor;
-void main() {
+void main(){
   gl_Position = uMVP * vec4(aPosition, 1.0);
   vColor = aColor;
-}
-`;
+}`;
 const fsSource = `
 precision mediump float;
 varying vec3 vColor;
-void main(){
-  gl_FragColor = vec4(vColor, 1.0);
-}
-`;
+void main(){ gl_FragColor = vec4(vColor, 1.0); }`;
 const program = createProgram(vsSource, fsSource);
 gl.useProgram(program);
 
 const aPositionLoc = gl.getAttribLocation(program, "aPosition");
-const aColorLoc = gl.getAttribLocation(program, "aColor");
-const uMVPLoc = gl.getUniformLocation(program, "uMVP");
+const aColorLoc    = gl.getAttribLocation(program, "aColor");
+const uMVPLoc      = gl.getUniformLocation(program, "uMVP");
 
+// ====== Geometry Builders ======
 function createBoxData(x1, x2, y1, y2, z1, z2, color) {
   const px = [
-    [x1, y1, z1], [x2, y1, z1], [x2, y2, z1], [x1, y2, z1],
-    [x1, y1, z2], [x2, y1, z2], [x2, y2, z2], [x1, y2, z2]
+    [x1, y1, z1],[x2, y1, z1],[x2, y2, z1],[x1, y2, z1],
+    [x1, y1, z2],[x2, y1, z2],[x2, y2, z2],[x1, y2, z2]
   ];
-  const facesQuads = [
-    [0, 1, 2, 3], [4, 5, 6, 7], [3, 2, 6, 7], [0, 4, 5, 1],
-    [1, 5, 6, 2], [0, 3, 7, 4]
+  const faces = [
+    [0,1,2,3],[4,5,6,7],[3,2,6,7],[0,4,5,1],[1,5,6,2],[0,3,7,4]
   ];
-  const pos = [], col = [];
+  const pos=[], col=[];
   const rgb = hexToRgbNorm(color);
-  for (let f = 0; f < facesQuads.length; f++) {
-    const quad = facesQuads[f];
-    const a = px[quad[0]], b = px[quad[1]], c = px[quad[2]], d = px[quad[3]];
-    pos.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]);
-    pos.push(a[0], a[1], a[2], c[0], c[1], c[2], d[0], d[1], d[2]);
-    for (let k = 0; k < 6; k++) col.push(rgb[0], rgb[1], rgb[2]);
+  for (const q of faces){
+    const a=px[q[0]], b=px[q[1]], c=px[q[2]], d=px[q[3]];
+    pos.push(a[0],a[1],a[2], b[0],b[1],b[2], c[0],c[1],c[2]);
+    pos.push(a[0],a[1],a[2], c[0],c[1],c[2], d[0],d[1],d[2]);
+    for (let k=0;k<6;k++) col.push(rgb[0],rgb[1],rgb[2]);
   }
-  return { pos: new Float32Array(pos), col: new Float32Array(col) };
+  return { pos:new Float32Array(pos), col:new Float32Array(col) };
+}
+// Outline (garis tepi)
+function createBoxOutline(x1, x2, y1, y2, z1, z2, color){
+  const v=[
+    [x1,y1,z1],[x2,y1,z1],[x2,y2,z1],[x1,y2,z1],
+    [x1,y1,z2],[x2,y1,z2],[x2,y2,z2],[x1,y2,z2]
+  ];
+  const edges=[[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
+  const pos=[], col=[];
+  const rgb=hexToRgbNorm(color);
+  for (const [a,b] of edges){
+    pos.push(v[a][0],v[a][1],v[a][2], v[b][0],v[b][1],v[b][2]);
+    col.push(rgb[0],rgb[1],rgb[2], rgb[0],rgb[1],rgb[2]);
+  }
+  return { pos:new Float32Array(pos), col:new Float32Array(col) };
 }
 
-const COL_LEG = "#000000";
-const COL_BACK = "#d2b48c";
-const COL_TOP = "#8b7355";
-const COL_MONITOR_SCREEN = "#000000";
-const COL_MONITOR_BEZEL = "#dddddd";
+// ====== Colors ======
+const COL_LEG   = "#000000";
+const COL_BACK  = "#d2b48c";
+const COL_TOP   = "#8b7355";
+const COL_MONITOR_SCREEN = "#000000"; // layar hitam
+const COL_MONITOR_BEZEL  = "#ffffff"; // kerangka/bezel putih
+const COL_OUTLINE = "#000000";
 
+// ====== Build Scene Geometry ======
 const allPositions = [];
-const allColors = [];
+const allColors    = [];
+const outlinePositions = [];
+const outlineColors    = [];
 
-function addShapeData(data) {
-  allPositions.push(...data.pos);
-  allColors.push(...data.col);
-}
+function addShapeData(d){ allPositions.push(...d.pos); allColors.push(...d.col); }
+function addOutlineData(d){ outlinePositions.push(...d.pos); outlineColors.push(...d.col); }
 
-addShapeData(createBoxData(-W / 2, -W / 2 + T, -H, 0, -D / 2, D / 2 - 1, COL_LEG));
-addShapeData(createBoxData(W / 2 - T, W / 2, -H, 0, -D / 2, D / 2 - 1, COL_LEG));
-addShapeData(createBoxData(-W / 2, W / 2, 0, T, -D / 2, D / 2, COL_TOP));
+// Kaki kiri
+let d = createBoxData(-W/2, -W/2 + T, -H, 0, -D/2, D/2 - 1, COL_LEG);
+addShapeData(d); addOutlineData(createBoxOutline(-W/2, -W/2 + T, -H, 0, -D/2, D/2 - 1, COL_OUTLINE));
+// Kaki kanan
+d = createBoxData(W/2 - T, W/2, -H, 0, -D/2, D/2 - 1, COL_LEG);
+addShapeData(d); addOutlineData(createBoxOutline(W/2 - T, W/2, -H, 0, -D/2, D/2 - 1, COL_OUTLINE));
+// Alas meja
+d = createBoxData(-W/2, W/2, 0, T, -D/2, D/2, COL_TOP);
+addShapeData(d); addOutlineData(createBoxOutline(-W/2, W/2, 0, T, -D/2, D/2, COL_OUTLINE));
+// Kaki belakang 3/4
 {
   const backHeight = H * 0.75, GAP = 1.5;
   const x1 = -W / 2 + T + GAP, x2 = W / 2 - T - GAP;
   const y1 = -backHeight, y2 = 0;
   const z1 = D / 2 - T - 2, z2 = D / 2 - 2;
-  addShapeData(createBoxData(x1, x2, y1, y2, z1, z2, COL_BACK));
+  d = createBoxData(x1, x2, y1, y2, z1, z2, COL_BACK);
+  addShapeData(d); addOutlineData(createBoxOutline(x1, x2, y1, y2, z1, z2, COL_OUTLINE));
 }
 
-const monitorWidth = 120, monitorHeight = 90, monitorDepth = 15;
-const standHeight = monitorHeight * 0.3;
-const baseHeight = monitorDepth * 0.2;
-const monitorZPosition = D / 2 + monitorDepth / 2 - 10;
+// ====== MONITOR ======
+// (diperbesar + dimajukan agar tidak terlalu pojok)
+const monitorWidth  = 150;
+const monitorHeight = 110;
+const monitorDepth  = 15;
+const standHeight   = monitorHeight * 0.3;
+const baseHeight    = monitorDepth * 0.22;
+
+const monitorZPosition = D / 2 - monitorDepth * 0.5 - 12; // tidak terlalu tepi
 const monitorCenterX = 0;
 
-const baseY_start = T;
-const baseY_end = baseY_start + baseHeight;
-addShapeData(createBoxData(
-  monitorCenterX - (monitorWidth * 0.6) / 2, monitorCenterX + (monitorWidth * 0.6) / 2,
-  baseY_start, baseY_end,
-  monitorZPosition - (monitorDepth * 0.8) / 2, monitorZPosition + (monitorDepth * 0.8) / 2,
-  COL_MONITOR_BEZEL
-));
+// Base
+{
+  const x1 = monitorCenterX - (monitorWidth * 0.6) / 2;
+  const x2 = monitorCenterX + (monitorWidth * 0.6) / 2;
+  const y1 = T;
+  const y2 = y1 + baseHeight;
+  const z1 = monitorZPosition - (monitorDepth * 0.8) / 2;
+  const z2 = monitorZPosition + (monitorDepth * 0.8) / 2;
+  d = createBoxData(x1, x2, y1, y2, z1, z2, COL_MONITOR_BEZEL);
+  addShapeData(d); addOutlineData(createBoxOutline(x1, x2, y1, y2, z1, z2, COL_OUTLINE));
+}
+// Stand
+{
+  const x1 = monitorCenterX - (monitorWidth * 0.1) / 2;
+  const x2 = monitorCenterX + (monitorWidth * 0.1) / 2;
+  const y1 = T + baseHeight;
+  const y2 = y1 + standHeight;
+  const z1 = monitorZPosition - (monitorDepth * 0.5) / 2;
+  const z2 = monitorZPosition + (monitorDepth * 0.5) / 2;
+  d = createBoxData(x1, x2, y1, y2, z1, z2, COL_MONITOR_BEZEL);
+  addShapeData(d); addOutlineData(createBoxOutline(x1, x2, y1, y2, z1, z2, COL_OUTLINE));
+}
+// Bezel (kerangka putih)
+const bezelY_start = T + baseHeight + standHeight;
+const bezelY_end   = bezelY_start + monitorHeight;
+{
+  const x1 = monitorCenterX - monitorWidth / 2;
+  const x2 = monitorCenterX + monitorWidth / 2;
+  const y1 = bezelY_start;
+  const y2 = bezelY_end;
+  const z1 = monitorZPosition - monitorDepth / 2;
+  const z2 = monitorZPosition + monitorDepth / 2;
+  d = createBoxData(x1, x2, y1, y2, z1, z2, COL_MONITOR_BEZEL);
+  addShapeData(d); addOutlineData(createBoxOutline(x1, x2, y1, y2, z1, z2, COL_OUTLINE));
+}
+// Screen (hitam), diletakkan sangat tipis & sedikit lebih ke depan agar terlihat
+{
+  const margin = 6;                    // jarak dari tepi bezel
+  const sDepth = monitorDepth * 0.02;  // sangat tipis
 
-const standY_start = baseY_end;
-const standY_end = standY_start + standHeight;
-addShapeData(createBoxData(
-  monitorCenterX - (monitorWidth * 0.1) / 2, monitorCenterX + (monitorWidth * 0.1) / 2,
-  standY_start, standY_end,
-  monitorZPosition - (monitorDepth * 0.5) / 2, monitorZPosition + (monitorDepth * 0.5) / 2,
-  COL_MONITOR_BEZEL
-));
+  const x1 = monitorCenterX - monitorWidth / 2 + margin;
+  const x2 = monitorCenterX + monitorWidth / 2 - margin;
+  const y1 = bezelY_start + margin;
+  const y2 = bezelY_end - margin;
 
-const bezelHeight = monitorHeight;
-const bezelY_start = standY_end;
-const bezelY_end = bezelY_start + bezelHeight;
-addShapeData(createBoxData(
-  monitorCenterX - monitorWidth / 2, monitorCenterX + monitorWidth / 2,
-  bezelY_start, bezelY_end,
-  monitorZPosition - monitorDepth / 2, monitorZPosition + monitorDepth / 2,
-  COL_MONITOR_BEZEL
-));
+  // Taruh layar di sisi "belakang" bezel (kebalikan dari sebelumnya)
+  const zFace = monitorZPosition - monitorDepth / 2 - 0.1; // sedikit keluar biar tak ketutup
+  const z1 = zFace;             // pastikan z1 < z2
+  const z2 = zFace + sDepth;
 
-const screenHeight = monitorHeight * 0.8;
-const screenWidth = monitorWidth * 0.9;
-const screenDepth = monitorDepth * 0.1;
-const screenY_start = bezelY_start + (bezelHeight - screenHeight) / 2;
-const screenY_end = screenY_start + screenHeight;
-const screenZ_start = monitorZPosition - screenDepth / 2;
-const screenZ_end = monitorZPosition + screenDepth / 2;
-addShapeData(createBoxData(
-  monitorCenterX - screenWidth / 2, monitorCenterX + screenWidth / 2,
-  screenY_start, screenY_end,
-  screenZ_start, screenZ_end,
-  COL_MONITOR_SCREEN
-));
+  d = createBoxData(x1, x2, y1, y2, z1, z2, COL_MONITOR_SCREEN);
+  addShapeData(d);
+  addOutlineData(createBoxOutline(x1, x2, y1, y2, z1, z2, COL_OUTLINE));
+}
 
-const positionsArray = new Float32Array(allPositions);
-const colorsArray = new Float32Array(allColors);
+// ====== Upload Buffers ======
+const positionsArray   = new Float32Array(allPositions);
+const colorsArray      = new Float32Array(allColors);
+const outlinePosArray  = new Float32Array(outlinePositions);
+const outlineColArray  = new Float32Array(outlineColors);
 
 const posBuffer = gl.createBuffer();
 gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
@@ -248,6 +273,15 @@ const colBuffer = gl.createBuffer();
 gl.bindBuffer(gl.ARRAY_BUFFER, colBuffer);
 gl.bufferData(gl.ARRAY_BUFFER, colorsArray, gl.STATIC_DRAW);
 
+const outlinePosBuffer = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, outlinePosBuffer);
+gl.bufferData(gl.ARRAY_BUFFER, outlinePosArray, gl.STATIC_DRAW);
+
+const outlineColBuffer = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, outlineColBuffer);
+gl.bufferData(gl.ARRAY_BUFFER, outlineColArray, gl.STATIC_DRAW);
+
+// Attribs untuk isi
 gl.enableVertexAttribArray(aPositionLoc);
 gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
 gl.vertexAttribPointer(aPositionLoc, 3, gl.FLOAT, false, 0, 0);
@@ -256,19 +290,22 @@ gl.enableVertexAttribArray(aColorLoc);
 gl.bindBuffer(gl.ARRAY_BUFFER, colBuffer);
 gl.vertexAttribPointer(aColorLoc, 3, gl.FLOAT, false, 0, 0);
 
+// GL states
 gl.enable(gl.DEPTH_TEST);
 gl.depthFunc(gl.LEQUAL);
 gl.disable(gl.CULL_FACE);
-gl.clearColor(1.0, 1.0, 1.0, 1.0);
+gl.clearColor(1, 1, 1, 1);
 
-function rad2deg(r) { return r * 180 / Math.PI; }
-function deg2rad(d) { return d * Math.PI / 180; }
-function wrapDeg(d) {
-  d = ((d + 180) % 360 + 360) % 360 - 180;
-  return d;
-}
+// Kurangi z-fighting antara isi & outline
+gl.enable(gl.POLYGON_OFFSET_FILL);
+gl.polygonOffset(1, 1);
 
-function updateSlidersFromRotation() {
+// ====== Utils ======
+function rad2deg(r){ return r * 180 / Math.PI; }
+function deg2rad(d){ return d * Math.PI / 180; }
+function wrapDeg(d){ d=((d+180)%360+360)%360-180; return d; }
+
+function updateSlidersFromRotation(){
   rotXEl.value = wrapDeg(rad2deg(rotX));
   rotYEl.value = wrapDeg(rad2deg(rotY));
   rotZEl.value = wrapDeg(rad2deg(rotZ));
@@ -277,19 +314,21 @@ function updateSlidersFromRotation() {
   valRotZ.textContent = rotZEl.value + "°";
 }
 
-function draw() {
+// ====== Render Loop ======
+function draw(){
   const now = performance.now();
-  const dt = Math.max(0, (now - lastTime) / 1000);
+  const dt = Math.max(0, (now - lastTime)/1000);
   lastTime = now;
 
-  if (autoRotate) {
-    rotX += (SPD.x * Math.PI / 180) * dt;
-    rotY += (SPD.y * Math.PI / 180) * dt;
-    rotZ += (SPD.z * Math.PI / 180) * dt;
+  if (autoRotate){
+    rotX += (SPD.x * Math.PI/180) * dt;
+    rotY += (SPD.y * Math.PI/180) * dt;
+    rotZ += (SPD.z * Math.PI/180) * dt;
     updateSlidersFromRotation();
   }
 
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
   const aspect = canvas.width / canvas.height;
   const proj = Mat4.perspective(deg2rad(45), aspect, NEAR, FAR);
   const view = Mat4.translate(0, 0, -CAM_Z);
@@ -297,18 +336,31 @@ function draw() {
   model = Mat4.multiply(model, Mat4.rotateX(rotX));
   model = Mat4.multiply(model, Mat4.rotateY(rotY));
   model = Mat4.multiply(model, Mat4.rotateZ(rotZ));
-  let vp = Mat4.multiply(proj, view);
-  let mvp = Mat4.multiply(vp, model);
+  const vp  = Mat4.multiply(proj, view);
+  const mvp = Mat4.multiply(vp, model);
   gl.uniformMatrix4fv(uMVPLoc, false, mvp);
 
+  // isi
+  gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
+  gl.vertexAttribPointer(aPositionLoc, 3, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, colBuffer);
+  gl.vertexAttribPointer(aColorLoc, 3, gl.FLOAT, false, 0, 0);
   gl.drawArrays(gl.TRIANGLES, 0, positionsArray.length / 3);
+
+  // outline
+  gl.bindBuffer(gl.ARRAY_BUFFER, outlinePosBuffer);
+  gl.vertexAttribPointer(aPositionLoc, 3, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, outlineColBuffer);
+  gl.vertexAttribPointer(aColorLoc, 3, gl.FLOAT, false, 0, 0);
+  gl.lineWidth(1);
+  gl.drawArrays(gl.LINES, 0, outlinePosArray.length / 3);
 
   requestAnimationFrame(draw);
 }
 requestAnimationFrame(draw);
 
-function setLabel(el, lab) { lab.textContent = `${el.value}°`; }
-
+// ====== UI wiring ======
+function setLabel(el, lab){ lab.textContent = `${el.value}°`; }
 rotX = deg2rad(+rotXEl.value);
 rotY = deg2rad(+rotYEl.value);
 rotZ = deg2rad(+rotZEl.value);
@@ -330,15 +382,15 @@ window.addEventListener('keydown', (e) => {
 });
 
 const STEP = 20, STEP_Z = 10;
-function showPos() { posReadout.textContent = `Posisi: x=${pos.x}, y=${pos.y}, z=${pos.z}`; }
+function showPos(){ posReadout.textContent = `Posisi: x=${pos.x}, y=${pos.y}, z=${pos.z}`; }
 showPos();
 
 btn.xMinus.onclick = () => { pos.x -= STEP; showPos(); };
-btn.xPlus.onclick = () => { pos.x += STEP; showPos(); };
+btn.xPlus.onclick  = () => { pos.x += STEP; showPos(); };
 btn.yMinus.onclick = () => { pos.y -= STEP; showPos(); };
-btn.yPlus.onclick = () => { pos.y += STEP; showPos(); };
+btn.yPlus.onclick  = () => { pos.y += STEP; showPos(); };
 btn.zMinus.onclick = () => { pos.z += STEP_Z; showPos(); };
-btn.zPlus.onclick = () => { pos.z -= STEP_Z; showPos(); };
+btn.zPlus.onclick  = () => { pos.z -= STEP_Z; showPos(); };
 
 window.addEventListener('keydown', (e) => {
   const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : "";
