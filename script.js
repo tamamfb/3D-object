@@ -4,7 +4,6 @@ if (!gl) {
   alert("WebGL tidak tersedia di browser ini.");
 }
 
-// ====== Canvas Resize ======
 function fitCanvas() {
   const rect = canvas.parentElement.getBoundingClientRect();
   const dpr = Math.max(1, window.devicePixelRatio || 1);
@@ -19,21 +18,18 @@ function fitCanvas() {
 window.addEventListener("resize", fitCanvas);
 fitCanvas();
 
-// ====== Camera & Constants ======
 const CAM_Z = 600;
 const NEAR = 8;
 const FAR = 2000;
 
-const W = 300, D = 180, H = 150, T = 10; // meja (width, depth, height, thickness)
+const W = 300, D = 180, H = 150, T = 10;
 
-// ====== State ======
 let rotX = 0, rotY = 0, rotZ = 0;
 let pos = { x: 0, y: 0, z: 0 };
 let autoRotate = false;
 const SPD = { x: 20, y: 30, z: 15 };
 let lastTime = performance.now();
 
-// ====== UI ======
 const rotXEl = document.getElementById("rotX");
 const rotYEl = document.getElementById("rotY");
 const rotZEl = document.getElementById("rotZ");
@@ -48,7 +44,6 @@ const btn = {
   zMinus: document.getElementById("zMinus"), zPlus: document.getElementById("zPlus"),
 };
 
-// ====== GL Helpers ======
 function compileShader(src, type) {
   const s = gl.createShader(type);
   gl.shaderSource(s, src);
