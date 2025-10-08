@@ -61,59 +61,98 @@
         </section>
 
         <aside class="right">
-            <div class="panel">
-                <div>
-                    <div class="section-title">Rotasi</div>
-                    <div class="sliders">
-                        <div class="row">
-                            <label for="rotX">Rotate X</label>
-                            <input id="rotX" type="range" min="-180" max="180" value="0" step="1">
-                            <span id="valRotX">0°</span>
-                        </div>
-                        <div class="row">
-                            <label for="rotY">Rotate Y</label>
-                            <input id="rotY" type="range" min="-180" max="180" value="0" step="1">
-                            <span id="valRotY">0°</span>
-                        </div>
-                        <div class="row">
-                            <label for="rotZ">Rotate Z</label>
-                            <input id="rotZ" type="range" min="-180" max="180" value="0" step="1">
-                            <span id="valRotZ">0°</span>
-                        </div>
+        <div class="panel">
+            <div>
+                <div class="section-title">Rotasi</div>
+                <div class="sliders">
+                    <div class="row">
+                        <label for="rotX">Rotate X</label>
+                        <input id="rotX" type="range" min="-180" max="180" value="0" step="1">
+                        <span id="valRotX">0°</span>
                     </div>
-                </div>
-                
-                <div>
-                    <div class="section-title">Pilih Sudut Pandang</div>
-                    <div class="view-controls">
-                        <button id="viewFront">Depan</button>
-                        <button id="viewBack">Belakang</button>
-                        <button id="viewLeft">Kiri</button>
-                        <button id="viewRight">Kanan</button>
+                    <div class="row">
+                        <label for="rotY">Rotate Y</label>
+                        <input id="rotY" type="range" min="-180" max="180" value="0" step="1">
+                        <span id="valRotY">0°</span>
                     </div>
-                </div>
-
-                <div>
-                    <div class="section-title">Auto Rotate</div>
-                    <button id="toggleAuto">Start</button>
-                    <div class="subtle" style="margin-top:6px">Shortcut: tekan <b>R</b> untuk toggle</div>
-                </div>
-
-                <div>
-                    <div class="section-title">Geser Posisi (Translasi)</div>
-                    <div class="controls">
-                        <button id="xMinus">X−</button>
-                        <button id="xPlus">X+</button>
-                        <button id="yMinus">Y−</button>
-                        <button id="yPlus">Y+</button>
-                        <button id="zMinus">Z−</button>
-                        <button id="zPlus">Z+</button>
+                    <div class="row">
+                        <label for="rotZ">Rotate Z</label>
+                        <input id="rotZ" type="range" min="-180" max="180" value="0" step="1">
+                        <span id="valRotZ">0°</span>
                     </div>
-                    <div class="subtle" id="posReadout">Posisi: x=0, y=0, z=0</div>
-                    <div class="subtle">Tips: W/A/S/D & Panah untuk X/Y, Q/E untuk Z</div>
                 </div>
             </div>
-        </aside>
+
+            <div>
+                <div class="section-title">Pilih Sudut Pandang</div>
+                <div class="view-controls">
+                    <button id="viewFront">Depan</button>
+                    <button id="viewBack">Belakang</button>
+                    <button id="viewLeft">Kiri</button>
+                    <button id="viewRight">Kanan</button>
+                </div>
+            </div>
+            <div>
+                <div class="section-title">Auto Rotate</div>
+                <button id="toggleAuto">Start</button>
+                <div class="subtle" style="margin-top:6px">Shortcut: tekan <b>R</b> untuk toggle</div>
+            </div>
+            <div>
+                <div class="section-title">Geser Posisi (Translasi)</div>
+                <div class="controls">
+                    <button id="xMinus">X−</button>
+                    <button id="xPlus">X+</button>
+                    <button id="yMinus">Y−</button>
+                    <button id="yPlus">Y+</button>
+                    <button id="zMinus">Z−</button>
+                    <button id="zPlus">Z+</button>
+                </div>
+                <div class="subtle" id="posReadout">Posisi: x=0, y=0, z=0</div>
+                <div class="subtle">Tips: W/A/S/D & Panah untuk X/Y, Q/E untuk Z</div>
+            </div>
+            <div>
+                <div class="section-title">Pencahayaan (Phong)</div>
+                <div style="display:grid; gap:8px;">
+                    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                        <label><input type="checkbox" id="enableAmbient" checked> Ambient</label>
+                        <label><input type="checkbox" id="enableDiffuse" checked> Diffuse</label>
+                        <label><input type="checkbox" id="enableSpecular" checked> Specular</label>
+                    </div>
+
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                        <div>
+                            <div class="subtle">Warna Ambient</div>
+                            <input id="colorAmbient" type="color" value="#404040">
+                        </div>
+                        <div>
+                            <div class="subtle">Warna Diffuse</div>
+                            <input id="colorDiffuse" type="color" value="#ffffff">
+                        </div>
+                        <div>
+                            <div class="subtle">Warna Specular</div>
+                            <input id="colorSpecular" type="color" value="#ffffff">
+                        </div>
+                        <div>
+                            <div class="subtle">Shininess</div>
+                            <input id="shininess" type="range" min="1" max="128" value="32">
+                            <div id="shininessVal">32</div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="subtle">Posisi Sumber Cahaya</div>
+                        <div style="display:grid; gap:6px;">
+                            <input id="lightX" type="range" min="-1000" max="1000" value="300">
+                            <input id="lightY" type="range" min="-1000" max="1000" value="300">
+                            <input id="lightZ" type="range" min="-1000" max="1000" value="300">
+                            <div class="subtle" id="lightPosReadout">Light: x=300, y=300, z=300</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </aside>
     </main>
 
     <script src="script.js"></script>

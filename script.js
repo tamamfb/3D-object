@@ -1,8 +1,6 @@
 const canvas = document.getElementById("myCanvas");
 const gl = canvas.getContext("webgl", { antialias: true });
-if (!gl) {
-    alert("WebGL tidak tersedia di browser ini.");
-}
+if (!gl) { alert("WebGL tidak tersedia di browser ini."); }
 
 function fitCanvas() {
     const rect = canvas.parentElement.getBoundingClientRect();
@@ -61,6 +59,26 @@ const viewButtons = {
     right: document.getElementById("viewRight"),
 };
 
+// --- UI lighting elements ---
+const enableAmbient = document.getElementById("enableAmbient");
+const enableDiffuse = document.getElementById("enableDiffuse");
+const enableSpecular = document.getElementById("enableSpecular");
+const colorAmbient = document.getElementById("colorAmbient");
+const colorDiffuse = document.getElementById("colorDiffuse");
+const colorSpecular = document.getElementById("colorSpecular");
+const shininessEl = document.getElementById("shininess");
+const shininessVal = document.getElementById("shininessVal");
+const lightX = document.getElementById("lightX");
+const lightY = document.getElementById("lightY");
+const lightZ = document.getElementById("lightZ");
+const lightPosReadout = document.getElementById("lightPosReadout");
+
+shininessEl.oninput = () => shininessVal.textContent = shininessEl.value;
+function updateLightPosReadout(){ lightPosReadout.textContent = `Light: x=${lightX.value}, y=${lightY.value}, z=${lightZ.value}`; }
+[lightX, lightY, lightZ].forEach(el => el.oninput = updateLightPosReadout);
+updateLightPosReadout();
+
+// --- shader helpers ---
 function compileShader(src, type) {
     const s = gl.createShader(type);
     gl.shaderSource(s, src);
@@ -91,6 +109,7 @@ function hexToRgbNorm(hex) {
     return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
 }
 
+// --- Mat4 (sama seperti sebelumnya) ---
 const Mat4 = {
     identity() { return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]); },
     multiply(a, b) {
@@ -112,44 +131,112 @@ const Mat4 = {
     }
 };
 
+// --- Shaders (vertex -> pass normal & position) ---
 const vsSource = `
 attribute vec3 aPosition;
+attribute vec3 aNormal;
 attribute vec3 aColor;
 uniform mat4 uMVP;
+uniform mat4 uModel; // untuk world space posisi & normal transform
 varying vec3 vColor;
+varying vec3 vNormal;
+varying vec3 vPosition;
 void main(){
-    gl_Position = uMVP * vec4(aPosition, 1.0);
+    vec4 worldPos = uModel * vec4(aPosition, 1.0);
+    vPosition = worldPos.xyz;
+    // normal: model is assumed to be rigid (no non-uniform scale). For safety we don't compute inverse-transpose here.
+    vNormal = mat3(uModel) * aNormal;
     vColor = aColor;
+    gl_Position = uMVP * vec4(aPosition, 1.0);
 }`;
+
+// fragment shader: Phong lighting per-fragment
 const fsSource = `
 precision mediump float;
 varying vec3 vColor;
-void main(){ gl_FragColor = vec4(vColor, 1.0); }`;
+varying vec3 vNormal;
+varying vec3 vPosition;
+uniform vec3 uLightPos;
+uniform vec3 uViewPos;
+uniform vec3 uAmbientColor;
+uniform vec3 uDiffuseColor;
+uniform vec3 uSpecularColor;
+uniform bool uEnableAmbient;
+uniform bool uEnableDiffuse;
+uniform bool uEnableSpecular;
+uniform float uShininess;
+void main(){
+    vec3 N = normalize(vNormal);
+    vec3 L = normalize(uLightPos - vPosition);
+    vec3 V = normalize(uViewPos - vPosition);
+    vec3 R = reflect(-L, N);
+    // ambient
+    vec3 ambient = uEnableAmbient ? uAmbientColor : vec3(0.0);
+    // diffuse (Lambert)
+    float diff = max(dot(N, L), 0.0);
+    vec3 diffuse = uEnableDiffuse ? (diff * uDiffuseColor) : vec3(0.0);
+    // specular (Blinn-Phong would use half vector; use Phong reflect)
+    float spec = 0.0;
+    if(uEnableSpecular && diff > 0.0){
+        spec = pow(max(dot(R, V), 0.0), uShininess);
+    }
+    vec3 specular = uEnableSpecular ? (spec * uSpecularColor) : vec3(0.0);
+    // combine, modulate by vertex color
+    vec3 result = (ambient + diffuse + specular) * vColor;
+    gl_FragColor = vec4(result, 1.0);
+}`;
+
+// create program
 const program = createProgram(vsSource, fsSource);
 gl.useProgram(program);
 
+// attribute/uniform locations
 const aPositionLoc = gl.getAttribLocation(program, "aPosition");
+const aNormalLoc   = gl.getAttribLocation(program, "aNormal");
 const aColorLoc    = gl.getAttribLocation(program, "aColor");
 const uMVPLoc      = gl.getUniformLocation(program, "uMVP");
+const uModelLoc    = gl.getUniformLocation(program, "uModel");
+const uLightPosLoc = gl.getUniformLocation(program, "uLightPos");
+const uViewPosLoc  = gl.getUniformLocation(program, "uViewPos");
+const uAmbientLoc  = gl.getUniformLocation(program, "uAmbientColor");
+const uDiffuseLoc  = gl.getUniformLocation(program, "uDiffuseColor");
+const uSpecularLoc = gl.getUniformLocation(program, "uSpecularColor");
+const uEnableAmbientLoc  = gl.getUniformLocation(program, "uEnableAmbient");
+const uEnableDiffuseLoc  = gl.getUniformLocation(program, "uEnableDiffuse");
+const uEnableSpecularLoc = gl.getUniformLocation(program, "uEnableSpecular");
+const uShininessLoc = gl.getUniformLocation(program, "uShininess");
 
+// --- Geometry building with normals ---
+// function createBoxData now returns normals too
 function createBoxData(x1, x2, y1, y2, z1, z2, color) {
     const px = [
         [x1, y1, z1],[x2, y1, z1],[x2, y2, z1],[x1, y2, z1],
         [x1, y1, z2],[x2, y1, z2],[x2, y2, z2],[x1, y2, z2]
     ];
+    // faces: each face is quad with known normal
     const faces = [
-        [0,1,2,3],[4,5,6,7],[3,2,6,7],[0,4,5,1],[1,5,6,2],[0,3,7,4]
+        { idx:[0,1,2,3], n:[0,0,-1] }, // front (z1)
+        { idx:[4,5,6,7], n:[0,0,1] },  // back (z2)
+        { idx:[3,2,6,7], n:[0,1,0] },  // top (y2)
+        { idx:[0,4,5,1], n:[0,-1,0] }, // bottom (y1)
+        { idx:[1,5,6,2], n:[1,0,0] },  // right (x2)
+        { idx:[0,3,7,4], n:[-1,0,0] }  // left (x1)
     ];
-    const pos=[], col=[];
+    const pos=[], col=[], nor=[];
     const rgb = hexToRgbNorm(color);
-    for (const q of faces){
-        const a=px[q[0]], b=px[q[1]], c=px[q[2]], d=px[q[3]];
+    for (const f of faces){
+        const a=px[f.idx[0]], b=px[f.idx[1]], c=px[f.idx[2]], d=px[f.idx[3]];
+        // two triangles: a,b,c  and a,c,d
         pos.push(a[0],a[1],a[2], b[0],b[1],b[2], c[0],c[1],c[2]);
         pos.push(a[0],a[1],a[2], c[0],c[1],c[2], d[0],d[1],d[2]);
-        for (let k=0;k<6;k++) col.push(rgb[0],rgb[1],rgb[2]);
+        for (let k=0;k<6;k++){
+            col.push(rgb[0],rgb[1],rgb[2]);
+            nor.push(f.n[0], f.n[1], f.n[2]);
+        }
     }
-    return { pos:new Float32Array(pos), col:new Float32Array(col) };
+    return { pos:new Float32Array(pos), col:new Float32Array(col), nor:new Float32Array(nor) };
 }
+
 function createBoxOutline(x1, x2, y1, y2, z1, z2, color){
     const v=[
         [x1,y1,z1],[x2,y1,z1],[x2,y2,z1],[x1,y2,z1],
@@ -164,6 +251,7 @@ function createBoxOutline(x1, x2, y1, y2, z1, z2, color){
     }
     return { pos:new Float32Array(pos), col:new Float32Array(col) };
 }
+
 const COL_LEG    = "#000000";
 const COL_BACK   = "#d2b48c";
 const COL_TOP    = "#8b7355";
@@ -173,11 +261,14 @@ const COL_OUTLINE = "#000000";
 
 const allPositions = [];
 const allColors    = [];
+const allNormals   = [];
 const outlinePositions = [];
 const outlineColors    = [];
 
-function addShapeData(d){ allPositions.push(...d.pos); allColors.push(...d.col); }
+function addShapeData(d){ allPositions.push(...d.pos); allColors.push(...d.col); allNormals.push(...d.nor); }
 function addOutlineData(d){ outlinePositions.push(...d.pos); outlineColors.push(...d.col); }
+
+// --- create same geometry as sebelumnya, but using new functions ---
 let d = createBoxData(-W/2, -W/2 + T, -H, 0, -D/2, D/2 - 1, COL_LEG);
 addShapeData(d); addOutlineData(createBoxOutline(-W/2, -W/2 + T, -H, 0, -D/2, D/2 - 1, COL_OUTLINE));
 d = createBoxData(W/2 - T, W/2, -H, 0, -D/2, D/2 - 1, COL_LEG);
@@ -252,11 +343,15 @@ const bezelY_end   = bezelY_start + monitorHeight;
     addShapeData(d);
     addOutlineData(createBoxOutline(x1, x2, y1, y2, z1, z2, COL_OUTLINE));
 }
+
+// flatten arrays
 const positionsArray = new Float32Array(allPositions);
 const colorsArray = new Float32Array(allColors);
+const normalsArray = new Float32Array(allNormals);
 const outlinePosArray = new Float32Array(outlinePositions);
 const outlineColArray = new Float32Array(outlineColors);
 
+// create buffers
 const posBuffer = gl.createBuffer();
 gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
 gl.bufferData(gl.ARRAY_BUFFER, positionsArray, gl.STATIC_DRAW);
@@ -264,6 +359,10 @@ gl.bufferData(gl.ARRAY_BUFFER, positionsArray, gl.STATIC_DRAW);
 const colBuffer = gl.createBuffer();
 gl.bindBuffer(gl.ARRAY_BUFFER, colBuffer);
 gl.bufferData(gl.ARRAY_BUFFER, colorsArray, gl.STATIC_DRAW);
+
+const norBuffer = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, norBuffer);
+gl.bufferData(gl.ARRAY_BUFFER, normalsArray, gl.STATIC_DRAW);
 
 const outlinePosBuffer = gl.createBuffer();
 gl.bindBuffer(gl.ARRAY_BUFFER, outlinePosBuffer);
@@ -273,9 +372,14 @@ const outlineColBuffer = gl.createBuffer();
 gl.bindBuffer(gl.ARRAY_BUFFER, outlineColBuffer);
 gl.bufferData(gl.ARRAY_BUFFER, outlineColArray, gl.STATIC_DRAW);
 
+// enable attributes
 gl.enableVertexAttribArray(aPositionLoc);
 gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
 gl.vertexAttribPointer(aPositionLoc, 3, gl.FLOAT, false, 0, 0);
+
+gl.enableVertexAttribArray(aNormalLoc);
+gl.bindBuffer(gl.ARRAY_BUFFER, norBuffer);
+gl.vertexAttribPointer(aNormalLoc, 3, gl.FLOAT, false, 0, 0);
 
 gl.enableVertexAttribArray(aColorLoc);
 gl.bindBuffer(gl.ARRAY_BUFFER, colBuffer);
@@ -311,6 +415,9 @@ function setCameraView(view) {
     camRot.z = deg2rad(view.rotZ || 0);
 }
 
+// initial light
+let light = { x: +lightX.value, y: +lightY.value, z: +lightZ.value };
+
 function draw(){
     const now = performance.now();
     const dt = Math.max(0, (now - lastTime)/1000);
@@ -323,34 +430,59 @@ function draw(){
         updateSlidersFromRotation();
     }
 
+    // update light from UI
+    light.x = +lightX.value; light.y = +lightY.value; light.z = +lightZ.value;
+
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
     const aspect = canvas.width / canvas.height;
-    
     const proj = Mat4.perspective(deg2rad(FOV), aspect, NEAR, FAR);
-    
+
     let view = Mat4.translate(-camPos.x, -camPos.y, -camPos.z);
     view = Mat4.multiply(Mat4.rotateX(camRot.x), view);
     view = Mat4.multiply(Mat4.rotateY(camRot.y), view);
     view = Mat4.multiply(Mat4.rotateZ(camRot.z), view);
-    
+
     let model = Mat4.translate(pos.x, pos.y, pos.z);
     model = Mat4.multiply(model, Mat4.rotateX(rotX));
     model = Mat4.multiply(model, Mat4.rotateY(rotY));
     model = Mat4.multiply(model, Mat4.rotateZ(rotZ));
-    
+
     const vp  = Mat4.multiply(proj, view);
     const mvp = Mat4.multiply(vp, model);
     gl.uniformMatrix4fv(uMVPLoc, false, mvp);
+    gl.uniformMatrix4fv(uModelLoc, false, model);
 
+    // camera pos in world (inverse of view translate; camera at camPos)
+    gl.uniform3f(uViewPosLoc, camPos.x, camPos.y, camPos.z);
+    gl.uniform3f(uLightPosLoc, light.x, light.y, light.z);
+
+    // pass lighting UI values
+    const amb = hexToRgbNorm(colorAmbient.value);
+    const dif = hexToRgbNorm(colorDiffuse.value);
+    const spec = hexToRgbNorm(colorSpecular.value);
+    gl.uniform3f(uAmbientLoc, amb[0], amb[1], amb[2]);
+    gl.uniform3f(uDiffuseLoc, dif[0], dif[1], dif[2]);
+    gl.uniform3f(uSpecularLoc, spec[0], spec[1], spec[2]);
+
+    gl.uniform1i(uEnableAmbientLoc, enableAmbient.checked ? 1 : 0);
+    gl.uniform1i(uEnableDiffuseLoc, enableDiffuse.checked ? 1 : 0);
+    gl.uniform1i(uEnableSpecularLoc, enableSpecular.checked ? 1 : 0);
+    gl.uniform1f(uShininessLoc, +shininessEl.value);
+
+    // draw solid
     gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
     gl.vertexAttribPointer(aPositionLoc, 3, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, norBuffer);
+    gl.vertexAttribPointer(aNormalLoc, 3, gl.FLOAT, false, 0, 0);
     gl.bindBuffer(gl.ARRAY_BUFFER, colBuffer);
     gl.vertexAttribPointer(aColorLoc, 3, gl.FLOAT, false, 0, 0);
     gl.drawArrays(gl.TRIANGLES, 0, positionsArray.length / 3);
 
+    // draw outline on top
     gl.bindBuffer(gl.ARRAY_BUFFER, outlinePosBuffer);
     gl.vertexAttribPointer(aPositionLoc, 3, gl.FLOAT, false, 0, 0);
+    // use outline color buffer for aColor
     gl.bindBuffer(gl.ARRAY_BUFFER, outlineColBuffer);
     gl.vertexAttribPointer(aColorLoc, 3, gl.FLOAT, false, 0, 0);
     gl.lineWidth(1);
@@ -360,6 +492,7 @@ function draw(){
 }
 requestAnimationFrame(draw);
 
+// UI helpers (rotation sliders)
 function setLabel(el, lab){ lab.textContent = `${el.value}°`; }
 
 rotX = deg2rad(+rotXEl.value);
